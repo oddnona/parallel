@@ -4,11 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
+#include <pthread.h>
 #define BOX_LENGTH 10.0       // Box length
 #define DT 1.0E-1             // Time step size
 #define PARTICLE_MASS 1.0E-3  // Particle mass
 #define SIGMA 1.0E-2          // Particle size
+
+#define debug(...) fprintf(stderr, __VA_ARGS__)
+
+pthread_barrier_t barrier;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * @brief Macro for easy termination in case of errors. Usage is similar to printf:
@@ -20,20 +25,6 @@
     exit(EXIT_FAILURE);                                                                                          \
   } while (0)
 
-typedef struct ThreadArgs {
-    int *arr;
-    int n;
-    int t_id;
-} ThreadArgs ;
-
-ThreadArgs *create_args(int *arr, int n, int t_id) {
-    ThreadArgs *args = malloc(sizeof(ThreadArgs));
-    args->arr = arr;
-    args->n = n;
-    args->t_id = t_id;
-    return args;
-}
-
 /**
  * @brief 3D vector.
  */
@@ -43,13 +34,37 @@ typedef struct vec3 {
   float z;
 } vec3;
 
-/**
- * @brief A particle consisting of a position, velocity and force.
- */
 typedef struct Particle {
   vec3 pos;  // Position
   vec3 vel;  // Velocity
 } Particle;
+
+typedef struct ThreadArgs {
+    Particle *particles;
+    int n;
+    int t_id;
+    int time_steps;
+    int num_threads;
+    vec3 *forces;
+} ThreadArgs ;
+
+ThreadArgs *create_args(Particle *particles, int n, int t_id, int time_steps, int num_threads, vec3 *forces) {
+    ThreadArgs *args = malloc(sizeof(ThreadArgs));
+    args->particles = particles;
+    args->n = n;
+    args->t_id = t_id;
+    args->time_steps = time_steps;
+    args->num_threads = num_threads;
+    args->forces = forces;
+    return args;
+}
+
+
+
+/**
+ * @brief A particle consisting of a position, velocity and force.
+ */
+
 
 /**
  * @brief Reads input particles from a given file. The first line of the file is the number of particles N. The next N
@@ -130,22 +145,24 @@ float lj_potential_force(float r) {
   return 24.0 * (2.0 * sigma12 / r12 - 1.0 * sigma6 / r6) / r;
 }
 
-/**
- * @brief Performs a molecular dynamics simulation with the provided particles.
- *
- * @param particles The particles to simulate.
- * @param n Number of particles.
- * @param time_steps Number of time steps to simulate.
- * @param num_threads Number of threads to use for parallel execution.
- * @return float The total amount of energy in the system after all time steps have been simulated.
- */
-float simulate(Particle *particles, int n, int time_steps, int num_threads) {
-  vec3 *forces = malloc(n * sizeof(vec3));
+void *simulate_parallel(void *arg){
+  ThreadArgs *args = (ThreadArgs *)arg;
+  Particle *particles = args->particles;
+  vec3 *forces = args->forces;
+  int time_steps = args->time_steps;
+  int num_threads = args->num_threads;
+  int n = args->n;
+  int thread_id = args->t_id;
+
+  vec3 *forces_local = malloc(n*sizeof(vec3));
+
   for (int t = 0; t < time_steps; t++) {
     // Reset the forces
     memset(forces, 0, n * sizeof(vec3));
+    memset(forces_local, 0, n * sizeof(vec3));
     // Calculate forces
-    for (int i = 0; i < n; i++) {
+    for (int i = thread_id; i < n; i=i+num_threads) {
+
       for (int j = i + 1; j < n; j++) {
         // Distance between particles
         float dx = particles[i].pos.x - particles[j].pos.x;
@@ -161,17 +178,26 @@ float simulate(Particle *particles, int n, int time_steps, int num_threads) {
         // Calculate straight distance
         float r = sqrtf(dx * dx + dy * dy + dz * dz);
         float force = lj_potential_force(r);
-        forces[i].x += force * dx;
-        forces[i].y += force * dy;
-        forces[i].z += force * dz;
-        forces[j].x -= force * dx;
-        forces[j].y -= force * dy;
-        forces[j].z -= force * dz;
+        forces_local[i].x += force * dx;
+        forces_local[i].y += force * dy;
+        forces_local[i].z += force * dz;
+        forces_local[j].x -= force * dx;
+        forces_local[j].y -= force * dy;
+        forces_local[j].z -= force * dz;
       }
     }
+    pthread_mutex_lock(&mutex);
+    for(int i = 0; i < n; i++) {
+      forces[i].x += forces_local[i].x;
+      forces[i].y += forces_local[i].y;
+      forces[i].z += forces_local[i].z;
+    }
+    pthread_mutex_unlock(&mutex);
+
+    pthread_barrier_wait(&barrier);
 
     // Verlet Integration
-    for (int i = 0; i < n; i++) {
+    for (int i = thread_id; i < n; i=i+num_threads) {
       particles[i].pos.x += particles[i].vel.x * DT + 0.5 * forces[i].x / PARTICLE_MASS * DT * DT;
       particles[i].pos.y += particles[i].vel.y * DT + 0.5 * forces[i].y / PARTICLE_MASS * DT * DT;
       particles[i].pos.z += particles[i].vel.z * DT + 0.5 * forces[i].z / PARTICLE_MASS * DT * DT;
@@ -179,6 +205,36 @@ float simulate(Particle *particles, int n, int time_steps, int num_threads) {
       particles[i].vel.y += 0.5 * forces[i].y / PARTICLE_MASS * DT;
       particles[i].vel.z += 0.5 * forces[i].z / PARTICLE_MASS * DT;
     }
+
+    
+    pthread_barrier_wait(&barrier);
+
+  }
+
+  return EXIT_SUCCESS;
+}
+
+/**
+ * @brief Performs a molecular dynamics simulation with the provided particles.
+ *
+ * @param particles The particles to simulate.
+ * @param n Number of particles.
+ * @param time_steps Number of time steps to simulate.
+ * @param num_threads Number of threads to use for parallel execution.
+ * @return float The total amount of energy in the system after all time steps have been simulated.
+ */
+float simulate(Particle *particles, int n, int time_steps, int num_threads) {
+  vec3 *forces = malloc(n * sizeof(vec3));
+  
+  pthread_barrier_init(&barrier, NULL, num_threads);
+  pthread_t th[num_threads];
+
+  for(int i=0; i<num_threads; i++){
+    ThreadArgs *arg = create_args(particles, n, i, time_steps, num_threads, forces);
+    pthread_create(&th[i], NULL, simulate_parallel, arg);
+  }
+  for(int i=0; i<num_threads; i++){
+    pthread_join(th[i], NULL);
   }
 
   float potential_energy = 0.0;
