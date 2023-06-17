@@ -1,39 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
-
+#include <mpi.h>
 #include "linkedlist.h"
 #include "hashtable.h"
 #include "stringmanipulation.h"
 #include "stringlist.h"
 #include "pw_helpers.h"
 
-/**
- * Our entrypoint. We require two arguments to our program: the paths to a passwd and
- * shadow file. The number of threads/processes is dictated by MPI, and is out of our
- * control at this point.
- * 
- * Run like: mpiexec -n <threads> ./guessword <passwd> <shadow>
- */
-int main(int argc, char **argv) {
-    // Check arguments
-    if(argc != 3) {
-        fprintf(stderr, "Usage: ./guessword <passwd> <shadow>");
-        return EXIT_FAILURE;
-    }
+#define SENDTASKTAG 10
 
-    ///////////////////////////////////////////////////////////////////
-    // We now set up the local environment
-    ///////////////////////////////////////////////////////////////////
-    
-    // Read the password/shadow files and parse all input
-    char *passwdPath = argv[1];
-    char *shadowPath = argv[2];
 
-    struct users users = parseInput(passwdPath, shadowPath, false);
-
-    // Read top 250 passwords
-    struct stringList *top250 = readStringsFile("Files/top250.txt", MAX_PW_LENGTH);
+void executeTask1(struct users users, struct stringList *top250) {
 
     ///////////////////////////////////////////////////////////////////
     // We will now start to do the real work
@@ -93,4 +71,64 @@ int main(int argc, char **argv) {
 
     // Free users struct/information
     freeUserData(users);
+}
+
+/**
+ * Our entrypoint. We require two arguments to our program: the paths to a passwd and
+ * shadow file. The number of threads/processes is dictated by MPI, and is out of our
+ * control at this point.
+ * 
+ * Run like: mpiexec -n <threads> ./guessword <passwd> <shadow>
+ */
+int main(int argc, char **argv) {
+   
+    // Check arguments
+    if(argc != 3) {
+        fprintf(stderr, "Usage: ./guessword <passwd> <shadow>");
+        return EXIT_FAILURE;
+    }
+    MPI_Init(&argc, &argv);
+    int numtasks, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+
+    ///////////////////////////////////////////////////////////////////
+    // We now set up the local environment
+    ///////////////////////////////////////////////////////////////////
+    
+    // Read the password/shadow files and parse all input
+    char *passwdPath = argv[1];
+    char *shadowPath = argv[2];
+
+    struct users users = parseInput(passwdPath, shadowPath, false);
+
+    // Read top 250 passwords
+    struct stringList *top250 = readStringsFile("Files/top250.txt", MAX_PW_LENGTH);
+
+    ///////////////////////////////////////////////////////////////////
+    // Setup Master Worker
+    ///////////////////////////////////////////////////////////////////
+
+    int task = -1;
+    if (rank == 0) {
+        task = 1;
+        for (int i=1; i < numtasks; i++) {
+            MPI_Send(&task, 1, MPI_INT, i, SENDTASKTAG, MPI_COMM_WORLD);
+        }
+
+    } else {
+        MPI_Recv(&task, 1, MPI_INT, 0, SENDTASKTAG, MPI_COMM_WORLD, NULL);
+        switch (task)
+        {
+        case 1:
+            executeTask1(users, top250);
+            break;
+        
+        default:
+            break;
+        }
+    }
+
+    MPI_Finalize();
 }
