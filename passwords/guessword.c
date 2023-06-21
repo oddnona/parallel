@@ -9,10 +9,15 @@
 #include "pw_helpers.h"
 
 #define SENDTASKTAG 10
+#define DONETASKTAG 11
+#define SERVER_ID 0
+
+#define debug(...) fprintf(stderr, __VA_ARGS__);
 
 
 void executeTask1(struct users users, struct stringList *top250) {
 
+    debug("HERE!\n");
     ///////////////////////////////////////////////////////////////////
     // We will now start to do the real work
     ///////////////////////////////////////////////////////////////////
@@ -57,7 +62,6 @@ void executeTask1(struct users users, struct stringList *top250) {
     ///////////////////////////////////////////////////////////////////
 
     // Clean password list
-    freeStringList(top250);
     freeStringList(uppercase250);
     freeStringList(uppercaseName0);
     freeStringList(uppercaseName1);
@@ -69,8 +73,94 @@ void executeTask1(struct users users, struct stringList *top250) {
     freeStringList(capitalName2);
     freeStringList(capitalName3);
 
-    // Free users struct/information
-    freeUserData(users);
+    
+}
+void executeTask2(struct users users, struct stringList *books) {
+
+    ///////////////////////////////////////////////////////////////////
+    tryPasswords(books, users.passwords, users.hashSetting);
+    struct stringList *uppercasebooks = uppercaseList(books);
+    struct stringList *capitalbooks = capitalList(books);
+    tryPasswords(uppercasebooks, users.passwords, users.hashSetting);
+    tryPasswords(capitalbooks, users.passwords, users.hashSetting);
+    ///////////////////////////////////////////////////////////////////
+    // Clean password list
+    freeStringList(uppercasebooks);
+    freeStringList(capitalbooks);
+    
+}
+void executeTask3(struct users users, struct stringList *top250){
+
+    char *xor = "xor";
+    char end = '\0';
+    struct stringList *t250xor = manipulateList(top250, end, xor, 1);
+    tryPasswords(t250xor, users.passwords, users.hashSetting);
+    freeStringList(t250xor);
+}
+
+void executeTask4(struct users users, struct stringList *books){
+
+    char *xor = "xor";
+    char end = '\0';
+    struct stringList *booksxor = manipulateList(books, end, xor, 1);
+    tryPasswords(booksxor, users.passwords, users.hashSetting);
+    freeStringList(booksxor);
+}
+
+void executeTask5(struct users users){
+
+    char *xor = "xor";
+    char end = '\0';
+    struct stringList *Name0xor = manipulateList(users.names[0], end, xor, 1);
+    struct stringList *Name1xor = manipulateList(users.names[1], end, xor, 1);
+    struct stringList *Name2xor = manipulateList(users.names[2], end, xor, 1);
+    struct stringList *Name3xor = manipulateList(users.names[3], end, xor, 1);
+
+    tryPasswords(Name0xor, users.passwords, users.hashSetting);
+    tryPasswords(Name1xor, users.passwords, users.hashSetting);
+    tryPasswords(Name2xor, users.passwords, users.hashSetting);
+    tryPasswords(Name3xor, users.passwords, users.hashSetting);
+    freeStringList(Name0xor);
+    freeStringList(Name1xor);
+    freeStringList(Name2xor);
+    freeStringList(Name3xor);
+}
+
+void executeTask6(struct users users, struct stringList *top250){
+
+    char *zorz = "zorz";
+    char end = '\0';
+    struct stringList *t250zorz = manipulateList(top250, end, zorz, 1);
+    tryPasswords(t250zorz, users.passwords, users.hashSetting);
+    freeStringList(t250zorz);
+}
+
+void executeTask7(struct users users, struct stringList *books){
+
+    char *zorz = "zorz";
+    char end = '\0';
+    struct stringList *bookszorz = manipulateList(books, end, zorz, 1);
+    tryPasswords(bookszorz, users.passwords, users.hashSetting);
+    freeStringList(bookszorz);
+}
+
+void executeTask8(struct users users){
+
+    char *zorz = "zorz";
+    char end = '\0';
+    struct stringList *Name0zorz = manipulateList(users.names[0], end, zorz, 1);
+    struct stringList *Name1zorz = manipulateList(users.names[1], end, zorz, 1);
+    struct stringList *Name2zorz = manipulateList(users.names[2], end, zorz, 1);
+    struct stringList *Name3zorz = manipulateList(users.names[3], end, zorz, 1);
+
+    tryPasswords(Name0zorz, users.passwords, users.hashSetting);
+    tryPasswords(Name1zorz, users.passwords, users.hashSetting);
+    tryPasswords(Name2zorz, users.passwords, users.hashSetting);
+    tryPasswords(Name3zorz, users.passwords, users.hashSetting);
+    freeStringList(Name0zorz);
+    freeStringList(Name1zorz);
+    freeStringList(Name2zorz);
+    freeStringList(Name3zorz);
 }
 
 /**
@@ -88,8 +178,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     MPI_Init(&argc, &argv);
-    int numtasks, rank;
-    MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
+    int nrProcessors, rank, rankId;
+    MPI_Comm_size(MPI_COMM_WORLD, &nrProcessors);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 
@@ -105,30 +195,73 @@ int main(int argc, char **argv) {
 
     // Read top 250 passwords
     struct stringList *top250 = readStringsFile("Files/top250.txt", MAX_PW_LENGTH);
+    struct stringList *books = readStringsFile("Files/books.txt", MAX_PW_LENGTH);
 
     ///////////////////////////////////////////////////////////////////
     // Setup Master Worker
     ///////////////////////////////////////////////////////////////////
-
+    int nr_tasks = 8;
     int task = -1;
-    if (rank == 0) {
+    if (rank == SERVER_ID) {
         task = 1;
-        for (int i=1; i < numtasks; i++) {
-            MPI_Send(&task, 1, MPI_INT, i, SENDTASKTAG, MPI_COMM_WORLD);
+        for(int i=1; i<nrProcessors; i++){
+            MPI_Send(&task, 1, MPI_INT, i, SENDTASKTAG, MPI_COMM_WORLD); 
+            task++;
         }
+
+        while (task <= nr_tasks) {
+            MPI_Recv(&rankId, 1, MPI_INT, MPI_ANY_SOURCE, DONETASKTAG, MPI_COMM_WORLD, NULL);
+            MPI_Send(&task, 1, MPI_INT, rankId, SENDTASKTAG, MPI_COMM_WORLD);
+            task++;
+        }
+
+        task=-1;
+        for(int i=1; i<nrProcessors; i++){
+            MPI_Send(&task, 1, MPI_INT, i, SENDTASKTAG, MPI_COMM_WORLD); 
+        }
+               
 
     } else {
-        MPI_Recv(&task, 1, MPI_INT, 0, SENDTASKTAG, MPI_COMM_WORLD, NULL);
-        switch (task)
+        do
         {
-        case 1:
-            executeTask1(users, top250);
-            break;
+            MPI_Recv(&task, 1, MPI_INT, SERVER_ID, SENDTASKTAG, MPI_COMM_WORLD, NULL);
+            switch (task)
+            {
+                case 1:
+                    executeTask1(users, top250);
+                    break;
+                case 2:
+                    executeTask2(users, books);
+                    break;
+                case 3:
+                    executeTask3(users, top250);
+                    break;
+                case 4:
+                    executeTask4(users, books);
+                    break;
+                case 5:
+                    executeTask5(users);
+                    break;
+                case 6:
+                    executeTask6(users, top250);
+                    break;
+                case 7:
+                    executeTask7(users, books);
+                    break;
+                case 8:
+                    executeTask8(users);
+                    break;
+                default:
+                    break;
+            }
+            MPI_Send(&rank, 1, MPI_INT, SERVER_ID, DONETASKTAG, MPI_COMM_WORLD);
+        } while (task!=-1);
         
-        default:
-            break;
-        }
+        
     }
-
+    // Free users struct/information
+    freeUserData(users);
+    freeStringList(top250);
+    freeStringList(books);
     MPI_Finalize();
 }
