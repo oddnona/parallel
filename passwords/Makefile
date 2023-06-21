@@ -12,7 +12,7 @@ endif
 ODIR=obj
 
 # List of libraries
-_OBJS = hashtable.o linkedlist.o pw_helpers.o stringlist.o
+_OBJS = hashtable.o linkedlist.o pw_helpers.o stringlist.o tasks.o
 OBJS = $(patsubst %,$(ODIR)/%,$(_OBJS)) # Make prepended with obj/
 
 # Name of our implementation
